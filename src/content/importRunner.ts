@@ -32,6 +32,14 @@ export interface ImportOptions {
   /** Override the chunk ceiling. */
   maxPromptChars?: number;
   onProgress?: (p: ImportProgress) => void;
+  /**
+   * Fired as soon as the conversation exists and its first chunk has landed.
+   *
+   * The caller uses this to navigate, matching claude.ai's own behaviour of
+   * jumping to `/chat/{uuid}` the instant a turn is sent rather than after the
+   * whole exchange. The import keeps running after this fires.
+   */
+  onCreated?: (createdUuid: string) => void;
 }
 
 export interface ImportResult {
@@ -178,6 +186,11 @@ export async function runImport(
 
       parent = result.assistantUuid;
       sent = i + 1;
+
+      // The conversation now has real content, so it is safe to navigate to.
+      // Waiting for every chunk would strand the user on /new for the whole
+      // import - and strand them there entirely if a quota wall pauses it.
+      if (i === 0) opts.onCreated?.(createdUuid);
 
       await writeToken({
         bundle_id: bundleId,

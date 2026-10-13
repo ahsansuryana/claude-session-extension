@@ -230,6 +230,16 @@ input[type="checkbox"] { accent-color: var(--sext-accent); }
 .bar-fill.warn { background: var(--sext-warn); }
 .bar-fill.over { background: var(--sext-danger); }
 
+.import-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--sext-line);
+  background: var(--sext-soft);
+}
+
 .progress { height: 6px; border-radius: 999px; background: var(--sext-soft); overflow: hidden; }
 .progress-fill { height: 100%; background: var(--sext-accent); transition: width .2s ease; }
 

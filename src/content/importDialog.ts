@@ -5,6 +5,7 @@ import type { SessionBundle, VaultEntryMeta } from '../types/session';
 import { call } from '../bridge/port';
 import { describe } from './saveDialog';
 import { clearResume, readResumeToken, runImport, type ImportProgress } from './importRunner';
+import { setImportProgress } from './importState';
 import { clear, h, showModal, toast } from './ui/dom';
 import { renderVaultList } from './ui/vaultList';
 
@@ -194,12 +195,15 @@ export function openImportDialog(ctx: ImportDialogContext): void {
       running = true;
       errorSlot.replaceChildren();
 
+      // In-dialog progress. Usually the dialog closes on the first chunk and
+      // the dock takes over, but it stays here for the window before that.
       const progressBar = h('div', { class: 'progress' });
       const progressFill = h('div', { class: 'progress-fill', style: 'width:0%' });
       progressBar.appendChild(progressFill);
       const progressLabel = h('p', { class: 'muted small' }, 'Preparing…');
-      const progressSlot = h('div', {}, progressBar, progressLabel);
-      previewSlot.appendChild(progressSlot);
+      previewSlot.appendChild(h('div', {}, progressBar, progressLabel));
+
+      let navigated = false;
 
       const onProgress = (p: ImportProgress): void => {
         const pct =
@@ -208,16 +212,43 @@ export function openImportDialog(ctx: ImportDialogContext): void {
             : 0;
         progressFill.style.width = `${Math.min(100, pct)}%`;
         progressLabel.textContent = progressText(p);
+        setImportProgress({
+          sessionName: p.sessionName,
+          phase: p.phase,
+          chunkIndex: p.chunkIndex,
+          chunkTotal: p.chunkTotal,
+          createdUuid: p.createdUuid ?? '',
+          error: p.error,
+          paused: p.phase === 'paused',
+        });
       };
 
       try {
-        const result = await runImport(selected, { model: modelSelect.value || null, onProgress });
-        close();
-        toast(ctx.root, `Imported "${selected.session_name}"`);
-        ctx.onImported(result.createdUuid);
+        const result = await runImport(
+          selected,
+          {
+            model: modelSelect.value || null,
+            onProgress,
+            // Match claude.ai: go to the conversation as soon as it exists,
+            // rather than stranding the user on /new until the whole import
+            // finishes. The import keeps running; the dock tracks it.
+            onCreated: (uuid) => {
+              navigated = true;
+              close();
+              ctx.onImported(uuid);
+            },
+          },
+        );
+        setImportProgress(null);
+        if (!navigated) {
+          close();
+          toast(ctx.root, `Imported "${selected.session_name}"`);
+          ctx.onImported(result.createdUuid);
+        }
       } catch (error) {
         running = false;
         const message = describe(error);
+        setImportProgress(null);
         errorSlot.replaceChildren(
           h(
             'div',
@@ -225,6 +256,12 @@ export function openImportDialog(ctx: ImportDialogContext): void {
             message,
           ),
         );
+        // If we already navigated away, the dialog is gone - surface it on the
+        // dock instead of losing the error.
+        if (navigated) {
+          toast(ctx.root, message, isLimit(message) ? 'info' : 'error');
+          return;
+        }
         renderFooter();
       }
     }

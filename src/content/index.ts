@@ -6,6 +6,7 @@ import type { ClaudeUsage } from '../types/claude';
 import { mountDock } from './ui/dock';
 import { STYLES } from './ui/styles';
 import { currentConversationUuid, onRouteChange, parseRoute } from './router';
+import { onImportProgress } from './importState';
 import { openSaveDialog } from './saveDialog';
 import { openImportDialog } from './importDialog';
 
@@ -78,6 +79,10 @@ async function main(): Promise<void> {
   });
 
   onRouteChange((route) => dock.refresh(route));
+
+  // An import survives navigation to /chat/{uuid}, so the dock keeps showing
+  // where it got to rather than silently disappearing.
+  onImportProgress((state) => dock.setImport(state));
 
   // Usage is advisory: a failure here must never break saving or importing.
   void (async () => {

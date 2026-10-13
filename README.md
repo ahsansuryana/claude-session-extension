@@ -42,13 +42,37 @@ You should see a **Session Transfer** dock in the bottom-right corner.
 
 **In the other profile**
 
-1. Open claude.ai.
+1. Open claude.ai — you land on `/new`.
 2. **Import chat** in the dock.
 3. **From file** → pick the downloaded `.claude-session.json`. (Or **From this
    profile** if you previously imported it here.)
 4. Check the preview — turn count, block count, and how many prompts it will
    cost — pick a model, then **Import**.
-5. You land in the new conversation, already primed with the full history.
+5. The moment the conversation exists, the page moves to it — the same thing
+   claude.ai does the instant you send a message. The rest of the transcript
+   keeps streaming, and the dock shows a progress strip until it finishes.
+
+### Navigation and titles
+
+Importing navigates to `/chat/{uuid}` as soon as the **first** prompt lands, not
+when the whole import finishes. Waiting for every chunk would strand you on
+`/new` for the entire import, and strand you there permanently if a quota wall
+pauses it part-way.
+
+The conversation does appear in the sidebar as a new chat — it *is* a new
+conversation in that account, so that is unavoidable. What matching the native
+flow buys is that it never sits there empty under a placeholder name.
+
+Two naming mechanisms exist and they are not interchangeable:
+
+| Call | Effect |
+|---|---|
+| `POST /chat_conversations` `{name}` | creates, and the name is stored and listed |
+| `PUT /chat_conversations/{uuid}` `{name}` | renames; returns 202 |
+| `POST /chat_conversations/{uuid}/title` `{message_content}` | **does not overwrite** an existing title — it is an auto-titler that proposes one and echoes back the current title |
+
+The importer uses create + `PUT`. Switching to `/title` would silently do
+nothing.
 
 ---
 
@@ -82,7 +106,7 @@ injecting a `<script src="chrome-extension://…">` would not.
 | `src/core/vault.ts` | Per-profile storage with quota eviction. |
 | `src/content/` | Dock, dialogs, router, Shadow-DOM UI. |
 | `src/bridge/` | The two-world RPC. |
-| `tests/` | 143 tests. `npm test`. |
+| `tests/` | 181 tests. `npm test`. |
 
 ---
 
@@ -102,6 +126,7 @@ Auth is **first-party session cookies only** — no API key, and notably *not* a
 | Read conversation | `GET /api/organizations/{org}/chat_conversations/{uuid}?tree=True&rendering_mode=messages&render_all_tools=true&include_inline_comparison=true&consistency=strong` |
 | Create conversation | `POST /api/organizations/{org}/chat_conversations` `{name, model}` |
 | **Send a turn** | `POST /api/organizations/{org}/chat_conversations/{uuid}/completion` `{prompt, parent_message_uuid, rendering_mode, model}` → SSE |
+| Auto-title | `POST /api/organizations/{org}/chat_conversations/{uuid}/title` `{message_content, recent_titles}` — proposes a title; does not overwrite an existing one |
 | Rename / star / archive | `PUT /api/organizations/{org}/chat_conversations/{uuid}` (metadata only) |
 | Delete | `POST /api/organizations/{org}/chat_conversations/delete_many` `{conversation_uuids}` |
 | Usage limits | `GET /api/organizations/{org}/usage?at_wall=1&cedar_ember=1&skip_spend=1` |
@@ -258,7 +283,7 @@ cannot confirm exists.
 ```bash
 npm run dev        # rebuild dist/ on change (load dist/ unpacked to see it live)
 npm run typecheck  # tsc --noEmit, strict
-npm test           # 143 tests
+npm test           # 181 tests
 npm run build      # typecheck + build
 
 node scripts/live-check.mjs   # bundle the live-check harness

@@ -282,6 +282,62 @@ describe('runImport', () => {
     expect(await readResumeToken()).toBeNull();
   });
 
+  it('announces the conversation as soon as the first chunk lands', async () => {
+    // Matches claude.ai: /chat/{uuid} is visited the moment a turn is sent, not
+    // after the whole exchange.
+    const seen: string[] = [];
+    let n = 0;
+    const { fn } = fakeRpc({
+      ...DEFAULT_OK,
+      complete: () => ({ assistantUuid: `asst-${++n}`, humanUuid: `human-${n}` }),
+    });
+
+    await runImport(bundle(2), { onCreated: (uuid) => seen.push(uuid) }, {
+      call: fn,
+      chunks: ['C1', 'C2', 'C3'],
+    });
+
+    // Exactly once, and before the remaining chunks are sent.
+    expect(seen).toEqual(['new-conv']);
+  });
+
+  it('does not announce a conversation whose first chunk never landed', async () => {
+    const seen: string[] = [];
+    const { fn } = fakeRpc({
+      ...DEFAULT_OK,
+      complete: () => {
+        throw Object.assign(new Error('limit'), { code: 'exceeded_limit' });
+      },
+    });
+    await runImport(bundle(2), { onCreated: (u) => seen.push(u) }, {
+      call: fn,
+      chunks: ['C1', 'C2'],
+    }).catch(() => undefined);
+    // Navigating to a conversation with no content would be pointless.
+    expect(seen).toEqual([]);
+  });
+
+  it('keeps chunking after announcing the conversation', async () => {
+    let n = 0;
+    const order: string[] = [];
+    const { fn, calls } = fakeRpc({
+      ...DEFAULT_OK,
+      complete: () => ({ assistantUuid: `asst-${++n}`, humanUuid: 'h' }),
+    });
+    await runImport(
+      bundle(2),
+      {
+        onCreated: () => order.push('navigated'),
+        onProgress: (p) => {
+          if (p.phase === 'importing') order.push(`chunk-${p.chunkIndex + 1}`);
+        },
+      },
+      { call: fn, chunks: ['C1', 'C2'] },
+    );
+    expect(order).toEqual(['chunk-1', 'navigated', 'chunk-2']);
+    expect(calls.filter((c) => c.op === 'complete')).toHaveLength(2);
+  });
+
   it('stores the bundle in the vault under the token id before sending any chunk', async () => {
     // A run that dies on chunk 0 never reaches the end-of-run save, so the
     // early write is the only reason a resume can find the right transcript.

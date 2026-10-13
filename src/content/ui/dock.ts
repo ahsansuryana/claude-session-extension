@@ -1,9 +1,12 @@
 import type { ClaudeUsage } from '../../types/claude';
+import type { ActiveImport } from '../importState';
 import { clear, h } from './dom';
 import { chipState, readCachedSessionLimit, renderLimitDetail, summariseUsage } from './limits';
 
 export interface DockHandle {
   refresh(route: { kind: string }): void;
+  /** Show a running/paused import that survived a navigation. */
+  setImport(state: ActiveImport | null): void;
   destroy(): void;
 }
 
@@ -99,6 +102,10 @@ export function mountDock(opts: DockOptions): DockHandle {
     delete body.dataset.mode;
     clear(body);
 
+    // An import that outlived the dialog (we navigated to /chat/{uuid} as soon
+    // as it existed) still needs to show where it got to.
+    if (activeImport) body.appendChild(renderImportStrip(activeImport));
+
     const actions = h('div', { class: 'dock-actions' });
 
     const save = h('button', { class: 'primary', type: 'button' }, 'Save session');
@@ -131,6 +138,8 @@ export function mountDock(opts: DockOptions): DockHandle {
   renderActions(initialKind);
   paintChip();
 
+  let activeImport: ActiveImport | null = null;
+
   return {
     refresh(route): void {
       // Preserve the open limits popover across route changes.
@@ -142,8 +151,36 @@ export function mountDock(opts: DockOptions): DockHandle {
       }
       paintChip();
     },
+    setImport(state): void {
+      activeImport = state;
+      if (body.dataset.mode !== 'limits') renderActions(currentKind());
+    },
     destroy(): void {
       dock.remove();
     },
   };
+}
+
+/** Compact progress row for an import still running in this tab. */
+function renderImportStrip(state: ActiveImport): HTMLElement {
+  const wrap = h('div', { class: 'import-strip' });
+  const total = Math.max(1, state.chunkTotal);
+  const pct = Math.min(100, Math.round((state.chunkIndex / total) * 100));
+
+  wrap.appendChild(
+    h(
+      'div',
+      { class: 'limit-head' },
+      h('span', {}, state.paused ? 'Import paused' : 'Importing'),
+      h('span', { class: 'muted' }, `${state.chunkIndex}/${state.chunkTotal}`),
+    ),
+  );
+  wrap.appendChild(
+    h('div', { class: 'progress' }, h('div', { class: 'progress-fill', style: `width:${pct}%` })),
+  );
+  wrap.appendChild(h('div', { class: 'muted small' }, state.sessionName));
+  if (state.error) {
+    wrap.appendChild(h('div', { class: 'muted small' }, state.error));
+  }
+  return wrap;
 }

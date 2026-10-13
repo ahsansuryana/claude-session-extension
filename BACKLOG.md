@@ -148,7 +148,48 @@ anything it says "Limits: n/a" rather than "0% used".
 
 ---
 
-## 6. Smaller items
+## 6. Reproduce the native "new conversation" creation exactly
+
+**Status:** investigated; not achievable with the current API surface.
+
+Captured from a real `/new` → send ("hi") on 2026-10-14, the app does:
+
+1. generate the conversation uuid **client-side**
+2. `POST /chat_conversations/{uuid}/completion`
+3. `POST /chat_conversations/{uuid}/title` `{message_content, recent_titles}`
+4. navigate to `/chat/{uuid}`
+
+Step 1–2 is the interesting part: there is **no** `POST /chat_conversations`.
+The conversation springs into existence with its first message, which is why
+sending from `/new` never leaves an empty placeholder chat behind.
+
+**It could not be reproduced.** Posting `/completion` to a freshly generated uuid
+returns `404 chat_conversation_not_found`, tested with:
+
+- a plain request
+- the app's exact header set (`anthropic-client-platform`, `-client-sha`,
+  `-device-id`)
+- the conversation's own recorded model and `localStorage["default-model"]`
+
+All four variants 404. No service worker is registered, so nothing is hiding in
+a worker. The remaining untested variable is the **body**: the app gzips it
+(`content-encoding: gzip`, via `completionGzipWorker`) and it certainly carries
+more than the four keys this extension sends — tools, thinking config,
+personalized styles, attachments. Something in there is presumably what tells
+the server to create rather than look up.
+
+**To close this:** capture one gzipped request body and decompress it
+(`DecompressionStream('gzip')` in-page, or `zlib` in Node). The account used
+here was at its usage limit, which disabled the composer and blocked a fresh
+capture. Worth retrying from a profile with quota.
+
+**Until then** the importer creates first, then navigates as soon as the first
+prompt lands — so the empty chat exists for roughly one request, not for the
+whole import.
+
+---
+
+## 7. Smaller items
 
 - **Session browser.** List, preview and delete conversations in the dock
   without opening each one. `listConversations` already returns enough
