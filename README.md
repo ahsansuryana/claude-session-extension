@@ -106,7 +106,7 @@ injecting a `<script src="chrome-extension://…">` would not.
 | `src/core/vault.ts` | Per-profile storage with quota eviction. |
 | `src/content/` | Dock, dialogs, router, Shadow-DOM UI. |
 | `src/bridge/` | The two-world RPC. |
-| `tests/` | 181 tests. `npm test`. |
+| `tests/` | 194 tests. `npm test`. |
 
 ---
 
@@ -283,7 +283,7 @@ cannot confirm exists.
 ```bash
 npm run dev        # rebuild dist/ on change (load dist/ unpacked to see it live)
 npm run typecheck  # tsc --noEmit, strict
-npm test           # 181 tests
+npm test           # 194 tests
 npm run build      # typecheck + build
 
 node scripts/live-check.mjs   # bundle the live-check harness

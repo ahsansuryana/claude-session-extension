@@ -1,5 +1,6 @@
 import type { ClaudeUsage } from '../../types/claude';
 import type { ActiveImport } from '../importState';
+import { getImportProgress } from '../importState';
 import { clear, h } from './dom';
 import { chipState, readCachedSessionLimit, renderLimitDetail, summariseUsage } from './limits';
 
@@ -98,6 +99,11 @@ export function mountDock(opts: DockOptions): DockHandle {
     if ((event.target as HTMLElement).closest('.chip')) toggleDetail();
   });
 
+  // Seed from the store rather than waiting to be told. The dock can mount
+  // after an import has already started, and relying on subscription order
+  // would silently drop it.
+  let activeImport: ActiveImport | null = getImportProgress();
+
   function renderActions(kind: string = currentKind()): void {
     delete body.dataset.mode;
     clear(body);
@@ -137,8 +143,6 @@ export function mountDock(opts: DockOptions): DockHandle {
   const initialKind = location.pathname.startsWith('/chat/') ? 'chat' : 'new';
   renderActions(initialKind);
   paintChip();
-
-  let activeImport: ActiveImport | null = null;
 
   return {
     refresh(route): void {
