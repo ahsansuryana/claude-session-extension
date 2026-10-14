@@ -1,15 +1,14 @@
-# Session Transfer — save-only build
-
-> **Branch `save-only`.** One click, one Markdown file.
-> The full transfer feature (import, vault picker, usage tracking) lives on
-> [`main`](https://github.com/ahsansuryana/claude-session-extension/tree/main).
+# Session Transfer
 
 Click a 34px button in the bottom-right of claude.ai and the current
-conversation is downloaded as `<session name>.md` — messages, thinking, and
-tool calls included.
+conversation is downloaded as `<session name>.md` — messages, thinking, and tool
+calls included.
 
 No dialog, no preview, no options. The button spins while it works, then
 downloads and goes quiet.
+
+Built for one job: when a profile is running low on quota and you want the
+conversation out of it in a form you can read, edit or archive.
 
 ---
 
@@ -32,22 +31,22 @@ and dimmed everywhere else. Click it; you get a Markdown file.
 
 ## Why it is fast
 
-Exporting felt slow, so three things were removed:
+Three things made saving feel slow. All are gone:
 
-- **No work on page load.** The earlier build called `GET /api/bootstrap` on
-  every claude.ai page to draw a usage chip. That request is gone; the
-  extension makes no network call until you click.
+- **No work on page load.** An earlier build called `GET /api/bootstrap` on
+  every claude.ai page to draw a usage chip. The extension now makes no network
+  call until you click.
 - **The org is cached.** `/api/bootstrap` is a large response and the
   organization does not change, so it is fetched at most once per browser
   profile. Only the conversation itself is fetched per click.
-- **Nothing is rendered twice.** The save dialog used to call `renderPrompt`
+- **Nothing is rendered twice.** The old save dialog called `renderPrompt`
   purely to count characters for a size preview — the entire transcript was
   built twice per save. With no preview, it is built once.
 
 Measured in a live tab: the spinner appears **59 ms** after the click. The
 remaining ~2.5 s is the conversation API round trip, which is the data itself.
 
-`dist/` is 21.8 KB total, down from 46.7 KB on `main`.
+`dist/` is 21.8 KB total.
 
 ---
 
@@ -102,6 +101,8 @@ authenticated same-origin request; a script in the `MAIN` world is literally the
 page, so first-party cookies attach automatically and there is no CORS
 preflight. `world: "MAIN"` also bypasses page CSP.
 
+`src/types/protocol.ts` is the shared, dependency-free contract between them.
+
 ### Source layout
 
 | Path | Role |
@@ -125,11 +126,14 @@ claude.ai's JSON API is private and unversioned. Verified 2026-10-13. Auth is
 
 | Purpose | Request |
 |---|---|
-| Account + orgs | `GET /api/bootstrap` (cached) |
+| Account + orgs | `GET /api/bootstrap` (cached per profile) |
 | Read conversation | `GET /api/organizations/{org}/chat_conversations/{uuid}?tree=True&rendering_mode=messages&render_all_tools=true&include_inline_comparison=true&consistency=strong` |
 
 Note the capital-T `tree=True`. The plausible-looking
 `/chat_conversations/{uuid}/tree` route returns 404.
+
+Re-derive both from DevTools → Network if either stops working;
+`src/core/api.ts` is the only file that needs to change.
 
 ### `chat_messages` is a tree, not a list
 
@@ -159,6 +163,29 @@ and caches one organization id in `chrome.storage.local`. There is no server, no
 API key, and no analytics. Permissions: `storage`, and host access to
 `https://claude.ai`.
 
+---
+
+## Development
+
+```bash
+npm run dev        # rebuild dist/ on change
+npm run typecheck  # tsc --noEmit, strict
+npm test           # 69 tests
+npm run build      # typecheck + build
+```
+
+`tests/fab.test.ts` mounts the button against jsdom rather than testing it
+through injected fakes. Logic tests missed three mount-time faults that only
+showed up in a browser — a temporal-dead-zone reference, an append to the host
+instead of the shadow root, and an SVG built without its namespace. If you
+touch the UI, keep mounting it.
+
+---
+
 ## Licence
 
 No licence file yet — add one before distributing this.
+
+[implementation_plan.md](./implementation_plan.md) records the original design
+and the API findings this was built on. [BACKLOG.md](./BACKLOG.md) lists what
+was tried and why it was dropped.
