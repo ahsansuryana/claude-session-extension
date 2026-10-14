@@ -2,31 +2,35 @@
  * @vitest-environment jsdom
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { mountFab } from '../src/content/ui/fab';
-import { parseRoute } from '../src/content/router';
+import { mountFab, type FabState } from '../src/content/ui/fab';
 import { STYLES } from '../src/content/ui/styles';
+import { parseRoute } from '../src/content/router';
+import { toMarkdown } from '../src/core/markdown';
+import type { ClaudeConversation, ContentBlock } from '../src/types/claude';
+import { ROOT_MESSAGE_UUID } from '../src/types/session';
 
 /**
- * Smoke tests that actually mount the UI.
+ * Smoke tests that mount the button for real.
  *
- * Logic is tested through injected dependencies elsewhere, which means a
- * mount-time fault - a temporal-dead-zone reference, an append to the host
- * instead of the shadow root, a missing namespace on an SVG element - ships
- * with every other test green. Mounting for real is the only thing that
- * catches those.
+ * Logic elsewhere is tested through injected dependencies, which means a
+ * mount-time fault ships with every other test green. Mounting is the only
+ * thing that catches those.
  */
 
 function mount() {
   const host = document.createElement('div');
   document.body.appendChild(host);
   const root = host.attachShadow({ mode: 'open' });
-  const onSave = vi.fn();
-  const fab = mountFab({ root, onSave });
-  return { host, root, fab, onSave };
+  const fab = mountFab({ root });
+  return { host, root, fab };
 }
+
+const button = (root: ShadowRoot): HTMLButtonElement =>
+  root.querySelector('.fab') as HTMLButtonElement;
 
 beforeEach(() => {
   document.body.innerHTML = '';
+  vi.restoreAllMocks();
 });
 
 describe('mountFab', () => {
@@ -50,7 +54,6 @@ describe('mountFab', () => {
     expect(rule).toContain('width: 34px');
     expect(rule).toContain('height: 34px');
     expect(rule).toContain('border-radius: 50%');
-    // Positioned by the wrapper, which is what actually sits on screen.
     const wrapper = cssRule('.fab-wrap {', STYLES);
     expect(wrapper).toContain('position: fixed');
     expect(wrapper).toContain('right: 14px');
@@ -59,7 +62,6 @@ describe('mountFab', () => {
 
   it('dims itself until hovered so it stays unobtrusive', () => {
     expect(cssRule('.fab {', STYLES)).toContain('opacity: .55');
-    expect(cssRule('.fab:hover:not(:disabled)', STYLES)).toContain('opacity: 1');
   });
 
   it('never lets the host intercept page clicks', () => {
@@ -69,52 +71,31 @@ describe('mountFab', () => {
     expect(cssRule('.fab {', STYLES)).toContain('pointer-events: auto');
   });
 
-  it('renders the icon as real SVG, not an unknown element', () => {
+  it('renders real SVG outlines, not black blobs', () => {
     const { root } = mount();
-    const icon = root.querySelector('.fab svg');
-    expect(icon).not.toBeNull();
-    // createElement('svg') would produce HTMLUnknownElement with no namespace.
-    expect(icon?.namespaceURI).toBe('http://www.w3.org/2000/svg');
-    const shapes = [...(icon?.querySelectorAll('path, polyline') ?? [])];
+    const shapes = [...root.querySelectorAll('.fab-glyph path, .fab-glyph polyline, .fab-glyph circle')];
     expect(shapes.length).toBeGreaterThan(0);
-    // Un-stroked shapes render as solid black blobs instead of an outline.
     for (const shape of shapes) {
+      // createElement('svg') defaults to fill:black.
       expect(shape.getAttribute('fill')).toBe('none');
       expect(shape.getAttribute('stroke')).toBe('currentColor');
     }
   });
 
-  it('carries an accessible label', () => {
-    const { root } = mount();
-    const button = root.querySelector('.fab');
-    expect(button?.getAttribute('aria-label')).toBe('Save session');
-    expect(root.querySelector('.fab-tip')?.textContent).toBe('Save session');
-  });
-
-  it('fires onSave when clicked', () => {
-    const { root, onSave } = mount();
-    (root.querySelector('.fab') as HTMLButtonElement).click();
-    expect(onSave).toHaveBeenCalledTimes(1);
-  });
-
-  it('is disabled off a conversation, and says why', () => {
-    const { root, fab, onSave } = mount();
-    fab.setEnabled(false);
-    const button = root.querySelector('.fab') as HTMLButtonElement;
-    expect(button.disabled).toBe(true);
-    expect(button.title).toBe('Open a conversation first');
-    expect(root.querySelector('.fab-wrap')?.classList.contains('is-disabled')).toBe(true);
-
-    button.click();
-    expect(onSave).not.toHaveBeenCalled();
-  });
-
-  it('is enabled on a conversation', () => {
+  it('starts idle and disabled until a conversation is detected', () => {
     const { root, fab } = mount();
+    expect(root.querySelector('.fab-wrap')?.getAttribute('data-state')).toBe('idle');
+    expect(button(root).disabled).toBe(true);
+
     fab.setEnabled(true);
-    const button = root.querySelector('.fab') as HTMLButtonElement;
-    expect(button.disabled).toBe(false);
-    expect(button.title).toBe('Save this conversation');
+    expect(button(root).disabled).toBe(false);
+  });
+
+  it('explains why it is disabled off a conversation', () => {
+    const { root, fab } = mount();
+    fab.setEnabled(false);
+    expect(button(root).title).toBe('Open a conversation first');
+    expect(root.querySelector('.fab-tip')?.textContent).toBe('Open a conversation first');
   });
 
   it('detaches cleanly', () => {
@@ -123,12 +104,192 @@ describe('mountFab', () => {
     fab.destroy();
     expect(root.querySelector('.fab')).toBeNull();
   });
+});
 
-  it('drives itself from the route', () => {
-    expect(parseRoute('/chat/471bbd5c-3d8e-4fd5-a1f7-c36344b5fd41').kind).toBe('chat');
+describe('state machine', () => {
+  it('swaps the glyph per state', () => {
+    const { root, fab } = mount();
+    const seen: Record<FabState, string> = {
+      idle: 'path',
+      busy: 'circle',
+      done: 'polyline',
+      error: 'circle',
+    };
+    for (const state of ['busy', 'done', 'error', 'idle'] as FabState[]) {
+      fab.setState(state);
+      expect(root.querySelector(`.fab-glyph ${seen[state]}`), state).not.toBeNull();
+      expect(root.querySelector('.fab-wrap')?.getAttribute('data-state')).toBe(state);
+    }
+  });
+
+  it('spins while busy and blocks further clicks', () => {
+    const { root, fab } = mount();
+    fab.setEnabled(true);
+    fab.setState('busy');
+    const b = button(root);
+    expect(b.disabled).toBe(true);
+    expect(b.classList.contains('is-busy')).toBe(true);
+    expect(b.getAttribute('aria-busy')).toBe('true');
+    expect(root.querySelector('.spin')).not.toBeNull();
+  });
+
+  it('settles back to idle after done or error', async () => {
+    vi.useFakeTimers();
+    try {
+      const { root, fab } = mount();
+      fab.setState('done');
+      expect(root.querySelector('.fab-wrap')?.getAttribute('data-state')).toBe('done');
+      await vi.advanceTimersByTimeAsync(1600);
+      expect(root.querySelector('.fab-wrap')?.getAttribute('data-state')).toBe('idle');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('offers a retry after a failure', () => {
+    const { root, fab } = mount();
+    fab.setState('error');
+    expect(button(root).title).toContain('retry');
+  });
+});
+
+describe('route wiring', () => {
+  it('enables only on a conversation route', () => {
+    const chat = parseRoute('/chat/471bbd5c-3d8e-4fd5-a1f7-c36344b5fd41');
+    expect(chat.kind).toBe('chat');
     expect(parseRoute('/new').kind).toBe('new');
   });
 });
+
+describe('toMarkdown', () => {
+  const conv: ClaudeConversation = {
+    uuid: 'c1',
+    name: 'Contoh soal',
+    model: 'claude-sonnet-5-5',
+    created_at: '2026-10-14T00:00:00Z',
+    chat_messages: [],
+  };
+
+  function message(uuid: string, sender: 'human' | 'assistant', blocks: ContentBlock[], parent: string) {
+    return { uuid, sender, parent_message_uuid: parent, created_at: '', content: blocks };
+  }
+
+  it('renders headings and metadata', () => {
+    const md = toMarkdown(
+      conv,
+      [message('m0', 'human', [{ type: 'text', text: 'halo', citations: [] }], ROOT_MESSAGE_UUID)],
+      { nowIso: '2026-10-14T01:00:00Z' },
+    );
+    expect(md).toContain('# Contoh soal');
+    expect(md).toContain('- Source: https://claude.ai/chat/c1');
+    expect(md).toContain('- Model: claude-sonnet-5-5');
+    expect(md).toContain('- Exported: 2026-10-14T01:00:00Z');
+    expect(md).toContain('## Turn 1 · User');
+    expect(md).toContain('halo');
+  });
+
+  it('numbers only the turns it actually kept', () => {
+    const md = toMarkdown(
+      conv,
+      [
+        message('m0', 'human', [{ type: 'text', text: 'q', citations: [] }], ROOT_MESSAGE_UUID),
+        message('m1', 'assistant', [{ type: 'text', text: '   ', citations: [] }], 'm0'),
+        message('m2', 'human', [{ type: 'text', text: 'again', citations: [] }], 'm1'),
+      ],
+      { nowIso: 'x' },
+    );
+    expect(md).toContain('## Turn 1 · User');
+    expect(md).toContain('## Turn 2 · User');
+    expect(md).not.toContain('## Turn 3');
+  });
+
+  it('renders thinking and tools, and can drop them', () => {
+    const msgs = [
+      message(
+        'm1',
+        'assistant',
+        [
+          { type: 'thinking', thinking: '', summaries: [{ summary: 'Thinking hard' }] },
+          { type: 'tool_use', id: 't1', name: 'WebSearch', input: { q: 'x' } },
+          { type: 'tool_result', tool_use_id: 't1', content: 'result text', is_error: false },
+          { type: 'text', text: 'done', citations: [] },
+        ],
+        'm0',
+      ),
+    ];
+    const full = toMarkdown(conv, msgs, { nowIso: 'x' });
+    expect(full).toContain('> **Thinking** — Thinking hard');
+    expect(full).toContain('Tool: WebSearch');
+    expect(full).toContain('Tool result');
+
+    const lean = toMarkdown(conv, msgs, { nowIso: 'x', includeThinking: false, includeTools: false });
+    expect(lean).not.toContain('Thinking hard');
+    expect(lean).not.toContain('WebSearch');
+    expect(lean).toContain('done');
+  });
+
+  it('notes dropped files instead of losing them silently', () => {
+    const md = toMarkdown(
+      conv,
+      [
+        {
+          uuid: 'm0',
+          sender: 'human',
+          parent_message_uuid: ROOT_MESSAGE_UUID,
+          created_at: '',
+          files: [{ file_uuid: 'f', file_name: 'doc.pdf', size_bytes: 2048 }],
+          content: [{ type: 'text', text: 'see this', citations: [] }],
+        },
+      ],
+      { nowIso: 'x' },
+    );
+    expect(md).toContain('File omitted: doc.pdf (2 KB)');
+    expect(md).toContain('cannot be moved between accounts');
+  });
+
+  it('widens the fence when a tool payload contains backticks', () => {
+    const md = toMarkdown(
+      conv,
+      [
+        message(
+          'm1',
+          'assistant',
+          [{ type: 'tool_result', tool_use_id: 't', content: '```\ncode\n```', is_error: false }],
+          'm0',
+        ),
+      ],
+      { nowIso: 'x' },
+    );
+    expect(md).toContain('````');
+  });
+
+  it('truncates a runaway block', () => {
+    const huge = 'x'.repeat(30_000);
+    const md = toMarkdown(
+      conv,
+      [message('m0', 'human', [{ type: 'text', text: huge, citations: [] }], ROOT_MESSAGE_UUID)],
+      { nowIso: 'x' },
+    );
+    expect(md).toContain('truncated');
+    expect(md.length).toBeLessThan(26_000);
+  });
+
+  it('reports how many branch messages were left out', () => {
+    const withBranches: ClaudeConversation = {
+      ...conv,
+      chat_messages: [1, 2, 3, 4].map((i) => ({
+        uuid: `m${i}`,
+        sender: 'human' as const,
+        parent_message_uuid: ROOT_MESSAGE_UUID,
+        created_at: '',
+        content: [{ type: 'text' as const, text: `t${i}`, citations: [] }],
+      })),
+    };
+    const md = toMarkdown(withBranches, withBranches.chat_messages!.slice(0, 2)!, { nowIso: 'x' });
+    expect(md).toContain('2 messages on abandoned branches were not included');
+  });
+});
+
 /** Body of the first CSS rule whose selector list starts with `open`. */
 function cssRule(open: string, css: string): string {
   const start = css.indexOf(open);

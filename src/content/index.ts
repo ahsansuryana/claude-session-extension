@@ -1,43 +1,31 @@
-import { call, installBridge } from '../bridge/port';
-import { isExtensionGone } from '../core/storage';
-import { mountFab, type FabHandle } from './ui/fab';
+import { installBridge } from '../bridge/port';
+import { mountFab } from './ui/fab';
 import { STYLES } from './ui/styles';
-import { currentConversationUuid, onRouteChange, parseRoute, type Route } from './router';
-import { openSaveDialog } from './saveDialog';
+import { onRouteChange, parseRoute, type Route } from './router';
 
 /**
  * Content-script entry point.
  *
- * Save-only build: one 34px button. Import and usage tracking were removed on
- * the `save-only` branch; the transfer code still lives on `main`.
+ * One 34px button that exports the current conversation to Markdown. Nothing
+ * runs on page load - no API call, no dialog - because every extra request
+ * makes claude.ai itself feel slower.
  *
- * Everything network-facing goes through the MAIN-world bridge, which owns
- * `fetch`; everything `chrome.*`-facing stays here in the isolated world.
+ * Network calls go through the MAIN-world bridge, which owns `fetch`;
+ * `chrome.*` stays here in the isolated world.
  */
 
 const HOST_ID = 'session-transfer-host';
 
-/**
- * Bumped whenever `STYLES` changes shape. A tab that outlives an extension
- * update would otherwise keep the old stylesheet (and the old UI) with no
- * explanation, because re-using the host is what makes mounting idempotent.
- */
-const UI_VERSION = '1';
+/** Bumped when the UI shape changes, so a stale host is replaced. */
+const UI_VERSION = '3';
 
-interface Ui {
-  /** Element that owns the shadow root. Never append UI here. */
-  host: HTMLElement;
-  /** Where all UI must be appended. */
-  root: ShadowRoot;
-}
-
-function createUi(): Ui {
+function createUi(): ShadowRoot {
   const existing = document.getElementById(HOST_ID);
   if (existing instanceof HTMLElement && existing.dataset.sextVersion === UI_VERSION) {
-    return { host: existing, root: existing.shadowRoot as ShadowRoot };
+    return existing.shadowRoot as ShadowRoot;
   }
-  // Stale host from a previous build: replace it rather than layering new UI
-  // on top of old styles.
+  // A tab that outlived an extension update would otherwise keep the old
+  // stylesheet and the old UI with no explanation.
   existing?.remove();
 
   const host = document.createElement('div');
@@ -45,8 +33,7 @@ function createUi(): Ui {
   host.dataset.sextVersion = UI_VERSION;
   host.setAttribute('data-sext', 'host');
   // `all: initial` resets every inherited property; `pointer-events: none`
-  // guarantees the host never swallows clicks meant for the page. The FAB opts
-  // back in.
+  // guarantees the host never swallows clicks meant for the page.
   host.style.cssText = 'all: initial; pointer-events: none';
 
   const root = host.attachShadow({ mode: 'open' });
@@ -55,59 +42,28 @@ function createUi(): Ui {
   root.appendChild(style);
 
   document.documentElement.appendChild(host);
-  return { host, root };
+  return root;
 }
 
-async function main(): Promise<void> {
-  const { root } = createUi();
+function main(): void {
+  const root = createUi();
   installBridge();
 
-  const fab: FabHandle = mountFab({
-    root,
-    onSave: () => {
-      void openSaveDialog({ root, conversationUuid: currentConversationUuid });
-    },
-  });
-
+  const fab = mountFab({ root });
   const apply = (route: Route): void => fab.setEnabled(route.kind === 'chat');
   onRouteChange(apply);
   apply(parseRoute(location.pathname));
 
-  // Touch the API once so a dead extension context is reported here rather
-  // than on the user's first save.
-  void call('resolveActiveOrg', {}).catch((error: unknown) => {
-    if (isExtensionGone(error)) showReloadNotice(root);
-  });
-
   window.addEventListener('pagehide', () => fab.destroy(), { once: true });
 }
 
-/** Tell the user to reload after the extension context died. */
-function showReloadNotice(root: ShadowRoot): void {
-  if (root.querySelector('[data-sext="reload-notice"]')) return;
-  const banner = document.createElement('div');
-  banner.className = 'overlay';
-  banner.setAttribute('data-sext', 'reload-notice');
-  const panel = document.createElement('div');
-  panel.className = 'panel';
-  panel.innerHTML =
-    '<h2>Extension reloaded</h2>' +
-    '<p class="muted small">Session Transfer was updated, so this tab lost its connection to the ' +
-    'extension. Reload this tab to carry on.</p>' +
-    '<div class="actions"><button class="primary" type="button">Reload tab</button></div>';
-  panel.querySelector('button')?.addEventListener('click', () => location.reload());
-  banner.appendChild(panel);
-  root.appendChild(banner);
-}
-
 /** Mount the extension, surfacing any failure instead of dying silently. */
-async function start(): Promise<void> {
+function start(): void {
   try {
-    await main();
+    main();
   } catch (error) {
     console.error('[Session Transfer] failed to mount:', error);
-    const host = document.getElementById(HOST_ID);
-    const root = host?.shadowRoot;
+    const root = document.getElementById(HOST_ID)?.shadowRoot;
     if (!root) return;
     const banner = document.createElement('div');
     banner.className = 'notice notice-error';
@@ -119,7 +75,7 @@ async function start(): Promise<void> {
 }
 
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => void start(), { once: true });
+  document.addEventListener('DOMContentLoaded', start, { once: true });
 } else {
-  void start();
+  start();
 }

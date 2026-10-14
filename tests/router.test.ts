@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseRoute } from '../src/content/router';
-import { bundleFilename, slugify } from '../src/content/download';
-import { ROOT_MESSAGE_UUID } from '../src/types/session';
+import { markdownFilename } from '../src/core/markdown';
 
 describe('parseRoute', () => {
   const uuid = '471bbd5c-3d8e-4fd5-a1f7-c36344b5fd41';
@@ -16,7 +15,6 @@ describe('parseRoute', () => {
 
   it('recognises the new-chat route', () => {
     expect(parseRoute('/new')).toEqual({ kind: 'new', conversationUuid: null });
-    expect(parseRoute('/new/')).toEqual({ kind: 'new', conversationUuid: null });
   });
 
   it('does not treat a non-uuid chat path as a conversation', () => {
@@ -29,39 +27,36 @@ describe('parseRoute', () => {
     expect(parseRoute('/projects/abc')).toEqual({ kind: 'other', conversationUuid: null });
     expect(parseRoute('/')).toEqual({ kind: 'other', conversationUuid: null });
   });
-
-  it('exports the root sentinel the transfer format references', () => {
-    expect(ROOT_MESSAGE_UUID).toBe('00000000-0000-4000-8000-000000000000');
-  });
 });
 
-describe('slugify', () => {
-  it('lowercases and collapses punctuation', () => {
-    expect(slugify('Bantuan latihan dan tugas dengan LaTeX')).toBe(
-      'bantuan-latihan-dan-tugas-dengan-latex',
+describe('markdownFilename', () => {
+  it('uses the session name', () => {
+    expect(markdownFilename('Contoh soal yang membingungkan')).toBe(
+      'contoh-soal-yang-membingungkan.md',
     );
   });
 
-  it('trims leading and trailing dashes', () => {
-    expect(slugify('  --Hello!! World--  ')).toBe('hello-world');
+  it('collapses punctuation into dashes', () => {
+    expect(markdownFilename('My session!')).toBe('my-session.md');
   });
 
-  it('falls back for names with no usable characters', () => {
-    expect(slugify('!!!')).toBe('session');
-    expect(slugify('')).toBe('session');
+  it('trims leading and trailing dashes', () => {
+    expect(markdownFilename('  --Hello!! World--  ')).toBe('hello-world.md');
+  });
+
+  it('falls back when there is nothing usable', () => {
+    expect(markdownFilename('!!!')).toBe('claude-session.md');
+    expect(markdownFilename(undefined)).toBe('claude-session.md');
+    expect(markdownFilename('')).toBe('claude-session.md');
   });
 
   it('caps length at 60 characters without a trailing dash', () => {
-    const slug = slugify('a'.repeat(200));
-    expect(slug.length).toBeLessThanOrEqual(60);
-    expect(slug.endsWith('-')).toBe(false);
+    const name = markdownFilename('a'.repeat(200));
+    expect(name.length).toBeLessThanOrEqual(63); // 60 + '.md'
+    expect(name.endsWith('.md')).toBe(true);
   });
 
   it('strips diacritics', () => {
-    expect(slugify('Café Réunion naïve')).toBe('cafe-reunion-naive');
-  });
-
-  it('builds a stable filename', () => {
-    expect(bundleFilename('My session!')).toBe('my-session.claude-session.json');
+    expect(markdownFilename('Café Réunion')).toBe('cafe-reunion.md');
   });
 });

@@ -9,16 +9,8 @@
 
 export const RPC_CHANNEL = 'claude-session-transfer' as const;
 
-export type RpcOp =
-  | 'bootstrap'
-  | 'resolveActiveOrg'
-  | 'listConversations'
-  | 'getConversation'
-  | 'getUsage'
-  | 'createConversation'
-  | 'updateConversation'
-  | 'complete'
-  | 'deleteConversations';
+/** Only two calls remain in the save-only build. */
+export type RpcOp = 'resolveActiveOrg' | 'getConversation';
 
 export interface RpcRequest {
   channel: typeof RPC_CHANNEL;
@@ -32,7 +24,7 @@ export interface RpcFailure {
   message: string;
   status?: number;
   requestId?: string;
-  /** e.g. `exceeded_limit` - callers special-case this. */
+  /** e.g. `exceeded_limit`, `not_found`, `invalid_request`. */
   code?: string;
 }
 
@@ -45,28 +37,7 @@ export interface RpcResponse {
   error?: RpcFailure;
 }
 
-/**
- * `complete` streams SSE, so the MAIN world posts partial responses with the
- * same id and `done: false`, then one final response with `done: true`.
- */
-export interface RpcProgressResponse {
-  channel: typeof RPC_CHANNEL;
-  kind: 'progress';
-  id: string;
-  event: string;
-}
-
-const OPS: ReadonlySet<string> = new Set<RpcOp>([
-  'bootstrap',
-  'resolveActiveOrg',
-  'listConversations',
-  'getConversation',
-  'getUsage',
-  'createConversation',
-  'updateConversation',
-  'complete',
-  'deleteConversations',
-]);
+const OPS: ReadonlySet<string> = new Set<RpcOp>(['resolveActiveOrg', 'getConversation']);
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null;
@@ -93,16 +64,6 @@ export function isRpcResponse(data: unknown): data is RpcResponse {
   );
 }
 
-export function isRpcProgress(data: unknown): data is RpcProgressResponse {
-  return (
-    isRecord(data) &&
-    data.channel === RPC_CHANNEL &&
-    data.kind === 'progress' &&
-    typeof data.id === 'string' &&
-    typeof data.event === 'string'
-  );
-}
-
 export class RpcError extends Error {
   readonly status: number | undefined;
   readonly code: string | undefined;
@@ -119,12 +80,7 @@ export class RpcError extends Error {
 
 export function toRpcFailure(err: unknown): RpcFailure {
   if (err && typeof err === 'object') {
-    const e = err as {
-      message?: unknown;
-      status?: unknown;
-      code?: unknown;
-      requestId?: unknown;
-    };
+    const e = err as { message?: unknown; status?: unknown; code?: unknown; requestId?: unknown };
     return {
       message: typeof e.message === 'string' ? e.message : String(err),
       status: typeof e.status === 'number' ? e.status : undefined,

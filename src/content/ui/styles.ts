@@ -109,6 +109,18 @@ input[type="checkbox"] { accent-color: var(--sext-accent); }
 .fab:hover:not(:disabled), .fab:focus-visible { opacity: 1; color: var(--sext-fg); }
 .fab:active:not(:disabled) { transform: scale(.94); }
 .fab:disabled { color: var(--sext-muted); }
+.fab.is-busy { opacity: 1; color: var(--sext-accent); cursor: progress; }
+
+.fab-glyph { display: grid; place-items: center; }
+.spin { animation: sext-spin .7s linear infinite; }
+@keyframes sext-spin { to { transform: rotate(360deg); } }
+
+.fab-wrap[data-state="done"] .fab { color: var(--sext-ok); opacity: 1; }
+.fab-wrap[data-state="error"] .fab { color: var(--sext-danger); opacity: 1; }
+
+@media (prefers-reduced-motion: reduce) {
+  .spin { animation-duration: 2s; }
+}
 
 /* Tooltip, revealed on hover only. */
 .fab-tip {

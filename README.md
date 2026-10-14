@@ -1,17 +1,15 @@
 # Session Transfer — save-only build
 
-> **Branch `save-only`.** A trimmed build: **Save session only.**
-> Import, the vault picker and usage/limit tracking were removed because the
-> panel was covering too much of claude.ai's own UI.
-> The full transfer feature lives on [`main`](https://github.com/ahsansuryana/claude-session-extension/tree/main).
+> **Branch `save-only`.** One click, one Markdown file.
+> The full transfer feature (import, vault picker, usage tracking) lives on
+> [`main`](https://github.com/ahsansuryana/claude-session-extension/tree/main).
 
-Save the whole conversation — messages, thinking, tool calls — to a portable
-JSON file, so a session can be picked up somewhere else or archived before a
-profile runs out of quota.
+Click a 34px button in the bottom-right of claude.ai and the current
+conversation is downloaded as `<session name>.md` — messages, thinking, and
+tool calls included.
 
-The extension is now a **single 34px button** in the bottom-right corner. No
-panel, no title bar, nothing to expand. It sits at 55% opacity until you hover
-it, and disables itself on pages that are not conversations.
+No dialog, no preview, no options. The button spins while it works, then
+downloads and goes quiet.
 
 ---
 
@@ -22,43 +20,70 @@ npm install
 npm run build
 ```
 
-Then load it:
-
 1. Open `chrome://extensions`
 2. Turn on **Developer mode**
 3. **Load unpacked** → select the `dist/` folder
 4. Open or reload <https://claude.ai>
 
-A small ⌷ save icon appears in the bottom-right. On a conversation it is active;
-on `/new` it is dimmed.
-
-### Use
-
-1. Open the conversation you want to keep.
-2. Click the save icon.
-3. Retype the name if you want — it defaults to the conversation's own title.
-4. Choose what to capture (thinking, tool calls, file placeholders). The dialog
-   shows live counts and the resulting size.
-5. **Save session**. It goes into this profile's vault *and* downloads as
-   `<name>.claude-session.json`.
+A save icon appears in the bottom-right corner. It is enabled on conversations
+and dimmed everywhere else. Click it; you get a Markdown file.
 
 ---
 
-## What was removed, and why
+## Why it is fast
 
-| Removed | Reason |
-|---|---|
-| Import chat button + dialog + runner | Not needed for a save-only build |
-| Vault picker | Only existed to pick an import source |
-| Usage / limits chip and popover | Occupied the top of the panel permanently |
-| Toolbar badge, alarms, service worker | Showed quota status; now that nothing reads usage, it is dead weight |
+Exporting felt slow, so three things were removed:
 
-The transfer **library** is untouched: `core/api.ts` (including `complete`),
-`core/sse.ts` and `core/chunker.ts` are still present and tested. They are what
-`main` needs for import, so merging back stays a UI-only revert.
+- **No work on page load.** The earlier build called `GET /api/bootstrap` on
+  every claude.ai page to draw a usage chip. That request is gone; the
+  extension makes no network call until you click.
+- **The org is cached.** `/api/bootstrap` is a large response and the
+  organization does not change, so it is fetched at most once per browser
+  profile. Only the conversation itself is fetched per click.
+- **Nothing is rendered twice.** The save dialog used to call `renderPrompt`
+  purely to count characters for a size preview — the entire transcript was
+  built twice per save. With no preview, it is built once.
 
-Permissions dropped to just `storage`, and there is no background worker.
-`dist/` is 23.9 KB instead of 46.7 KB.
+Measured in a live tab: the spinner appears **59 ms** after the click. The
+remaining ~2.5 s is the conversation API round trip, which is the data itself.
+
+`dist/` is 21.8 KB total, down from 46.7 KB on `main`.
+
+---
+
+## What the Markdown looks like
+
+```markdown
+# Contoh soal yang membingungkan
+
+- Source: https://claude.ai/chat/9d8626c6-…
+- Model: claude-sonnet-5-5
+- Started: 2026-10-12T15:15:24.544444Z
+- Exported: 2026-10-14T02:50:44.132Z
+- 2 turns · 0 tool calls
+
+---
+
+## Turn 1 · User
+
+tolong buatkan contoh soal kayak gini, …
+
+## Turn 2 · Assistant
+
+> **Thinking** — Menyusun soal latihan
+
+Berikut contoh soalnya…
+```
+
+Thinking becomes a blockquote, tool calls and results become fenced blocks, and
+files are recorded as a note rather than silently dropped:
+
+```
+*[File omitted: 1000391085.jpg (418 KB) — contents cannot be moved between accounts.]*
+```
+
+The filename is the conversation's own title, slugged: `Contoh soal yang
+membingungkan` → `contoh-soal-yang-membingungkan.md`.
 
 ---
 
@@ -71,28 +96,24 @@ claude.ai page
         └── talks to main-world.js over window.postMessage
 ```
 
-Two worlds because the claude.ai API is **cookie-authenticated and
-same-origin only**. A content script in the isolated world cannot reliably make
-an authenticated same-origin request; a script in the `MAIN` world is literally
-the page, so first-party cookies attach automatically and there is no CORS
-preflight. `world: "MAIN"` in the manifest also bypasses page CSP, which
-injecting a `<script src="chrome-extension://…">` would not.
-
-`src/types/protocol.ts` is the shared, dependency-free contract between them.
+Two worlds because the claude.ai API is **cookie-authenticated and same-origin
+only**. A content script in the isolated world cannot reliably make an
+authenticated same-origin request; a script in the `MAIN` world is literally the
+page, so first-party cookies attach automatically and there is no CORS
+preflight. `world: "MAIN"` also bypasses page CSP.
 
 ### Source layout
 
 | Path | Role |
 |---|---|
+| `src/core/markdown.ts` | Conversation → Markdown, plus the filename rule. |
+| `src/core/tree.ts` | Resolves the active branch. |
 | `src/core/api.ts` | **The only module that knows claude.ai URLs.** |
-| `src/core/tree.ts` | Resolves the active branch of a conversation. |
-| `src/core/transcript.ts` | Messages → portable turns → prompt string. |
-| `src/core/bundle.ts` | Builds, validates and versions the portable file. |
-| `src/core/vault.ts` | Per-profile storage with quota eviction. |
-| `src/content/ui/fab.ts` | The 34px button. |
-| `src/content/saveDialog.ts` | The save flow. |
+| `src/core/storage.ts` | `chrome.storage` with dead-context detection. |
+| `src/content/exportSession.ts` | Click → fetch → render → download. |
+| `src/content/ui/fab.ts` | The button and its state machine. |
 | `src/bridge/` | The two-world RPC. |
-| `tests/` | 138 tests. `npm test`. |
+| `tests/` | 69 tests. `npm test`. |
 
 ---
 
@@ -104,10 +125,8 @@ claude.ai's JSON API is private and unversioned. Verified 2026-10-13. Auth is
 
 | Purpose | Request |
 |---|---|
-| Account + orgs | `GET /api/bootstrap` |
+| Account + orgs | `GET /api/bootstrap` (cached) |
 | Read conversation | `GET /api/organizations/{org}/chat_conversations/{uuid}?tree=True&rendering_mode=messages&render_all_tools=true&include_inline_comparison=true&consistency=strong` |
-| Rename / star / archive | `PUT /api/organizations/{org}/chat_conversations/{uuid}` (metadata only) |
-| Delete | `POST /api/organizations/{org}/chat_conversations/delete_many` `{conversation_uuids}` |
 
 Note the capital-T `tree=True`. The plausible-looking
 `/chat_conversations/{uuid}/tree` route returns 404.
@@ -129,65 +148,17 @@ current_leaf_message_uuid = message 3
 ```
 
 `src/core/tree.ts` walks back from `current_leaf_message_uuid` and exports
-`[2, 3]`. The abandoned branch is counted and shown in the dialog, never
-silently mixed in.
-
-### Files cannot be moved
-
-File assets are org-scoped at `/api/{org}/files/{file_uuid}/…`, so a bundle from
-one account cannot reference or re-upload anything into another. Files are
-recorded as `[file omitted: name (N KB) - not transferred across accounts]`.
-
----
-
-## The bundle format
-
-```jsonc
-{
-  "format": "claude-session-transfer",
-  "version": 1,
-  "exported_at": "2026-10-13T13:24:00.000Z",
-  "session_name": "My session",
-  "source": {
-    "account_uuid": "…", "account_email": "…",
-    "organization_uuid": "…", "organization_name": "…",
-    "conversation_uuid": "…", "conversation_name": "…",
-    "model": "claude-sonnet-5-5",
-    "created_at": "…", "updated_at": "…", "url": "https://claude.ai/chat/…"
-  },
-  "stats": {
-    "message_count": 12,     // on the active branch
-    "branch_count": 3,       // total in tree − active path
-    "content_blocks": 31, "chars": 28410, "omitted_files": 1
-  },
-  "turns": [
-    {
-      "index": 0,
-      "role": "user",
-      "source_uuid": "…",    // provenance only, never re-sent
-      "created_at": "…",
-      "blocks": [ { "type": "text", "text": "…", "citations": [] } ]
-    }
-  ]
-}
-```
-
-Block types: `text`, `thinking`, `tool_use`, `tool_result`, and the synthesised
-`file` placeholder. Older files are upgraded by `migrateBundle`; a file from a
-**newer** version is rejected with an explanatory message.
+`[2, 3]`. The file header states how many branch messages were left out.
 
 ---
 
 ## Privacy
 
 Everything stays on your machine. The extension talks only to `https://claude.ai`
-and stores sessions in `chrome.storage.local`. There is no server, no API key,
-and no analytics. Permissions: `storage`, and host access to `https://claude.ai`.
+and caches one organization id in `chrome.storage.local`. There is no server, no
+API key, and no analytics. Permissions: `storage`, and host access to
+`https://claude.ai`.
 
 ## Licence
 
 No licence file yet — add one before distributing this.
-
-See [BACKLOG.md](./BACKLOG.md) for what is planned next, and
-[implementation_plan.md](./implementation_plan.md) for the original design and
-the API findings it was built on.
