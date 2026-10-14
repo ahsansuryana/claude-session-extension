@@ -1,10 +1,17 @@
-# Session Transfer
+# Session Transfer — save-only build
 
-A Chrome extension for moving a Claude conversation between browser profiles.
+> **Branch `save-only`.** A trimmed build: **Save session only.**
+> Import, the vault picker and usage/limit tracking were removed because the
+> panel was covering too much of claude.ai's own UI.
+> The full transfer feature lives on [`main`](https://github.com/ahsansuryana/claude-session-extension/tree/main).
 
-Profile A runs out of quota, but the conversation isn't finished. Save the whole
-session — messages, thinking, tool calls — and import it into profile B, which
-continues from where A stopped.
+Save the whole conversation — messages, thinking, tool calls — to a portable
+JSON file, so a session can be picked up somewhere else or archived before a
+profile runs out of quota.
+
+The extension is now a **single 34px button** in the bottom-right corner. No
+panel, no title bar, nothing to expand. It sits at 55% opacity until you hover
+it, and disables itself on pages that are not conversations.
 
 ---
 
@@ -22,57 +29,36 @@ Then load it:
 3. **Load unpacked** → select the `dist/` folder
 4. Open or reload <https://claude.ai>
 
-You should see a **Session Transfer** dock in the bottom-right corner.
+A small ⌷ save icon appears in the bottom-right. On a conversation it is active;
+on `/new` it is dimmed.
 
-> Install it separately in **each** browser profile you want to move sessions
-> between. Chrome profiles have completely isolated extension storage — that is
-> exactly why a session has to travel as a file.
+### Use
 
-### Daily use
-
-**In the profile that is about to hit its limit**
-
-1. Open the conversation.
-2. **Save session** in the dock. The name defaults to the conversation's title
-   and is pre-selected — retype it if you want.
-3. Toggle what to include (thinking, tool calls, file placeholders). The dialog
-   shows live counts and the resulting prompt size.
-4. **Save session**. It goes into that profile's vault *and* downloads as
+1. Open the conversation you want to keep.
+2. Click the save icon.
+3. Retype the name if you want — it defaults to the conversation's own title.
+4. Choose what to capture (thinking, tool calls, file placeholders). The dialog
+   shows live counts and the resulting size.
+5. **Save session**. It goes into this profile's vault *and* downloads as
    `<name>.claude-session.json`.
 
-**In the other profile**
+---
 
-1. Open claude.ai — you land on `/new`.
-2. **Import chat** in the dock.
-3. **From file** → pick the downloaded `.claude-session.json`. (Or **From this
-   profile** if you previously imported it here.)
-4. Check the preview — turn count, block count, and how many prompts it will
-   cost — pick a model, then **Import**.
-5. The moment the conversation exists, the page moves to it — the same thing
-   claude.ai does the instant you send a message. The rest of the transcript
-   keeps streaming, and the dock shows a progress strip until it finishes.
+## What was removed, and why
 
-### Navigation and titles
-
-Importing navigates to `/chat/{uuid}` as soon as the **first** prompt lands, not
-when the whole import finishes. Waiting for every chunk would strand you on
-`/new` for the entire import, and strand you there permanently if a quota wall
-pauses it part-way.
-
-The conversation does appear in the sidebar as a new chat — it *is* a new
-conversation in that account, so that is unavoidable. What matching the native
-flow buys is that it never sits there empty under a placeholder name.
-
-Two naming mechanisms exist and they are not interchangeable:
-
-| Call | Effect |
+| Removed | Reason |
 |---|---|
-| `POST /chat_conversations` `{name}` | creates, and the name is stored and listed |
-| `PUT /chat_conversations/{uuid}` `{name}` | renames; returns 202 |
-| `POST /chat_conversations/{uuid}/title` `{message_content}` | **does not overwrite** an existing title — it is an auto-titler that proposes one and echoes back the current title |
+| Import chat button + dialog + runner | Not needed for a save-only build |
+| Vault picker | Only existed to pick an import source |
+| Usage / limits chip and popover | Occupied the top of the panel permanently |
+| Toolbar badge, alarms, service worker | Showed quota status; now that nothing reads usage, it is dead weight |
 
-The importer uses create + `PUT`. Switching to `/title` would silently do
-nothing.
+The transfer **library** is untouched: `core/api.ts` (including `complete`),
+`core/sse.ts` and `core/chunker.ts` are still present and tested. They are what
+`main` needs for import, so merging back stays a UI-only revert.
+
+Permissions dropped to just `storage`, and there is no background worker.
+`dist/` is 23.9 KB instead of 46.7 KB.
 
 ---
 
@@ -98,94 +84,35 @@ injecting a `<script src="chrome-extension://…">` would not.
 
 | Path | Role |
 |---|---|
-| `src/core/api.ts` | **The only module that knows claude.ai URLs.** All endpoints isolated here. |
+| `src/core/api.ts` | **The only module that knows claude.ai URLs.** |
 | `src/core/tree.ts` | Resolves the active branch of a conversation. |
 | `src/core/transcript.ts` | Messages → portable turns → prompt string. |
-| `src/core/chunker.ts` | Splits an oversized transcript into prompts. |
 | `src/core/bundle.ts` | Builds, validates and versions the portable file. |
 | `src/core/vault.ts` | Per-profile storage with quota eviction. |
-| `src/content/` | Dock, dialogs, router, Shadow-DOM UI. |
+| `src/content/ui/fab.ts` | The 34px button. |
+| `src/content/saveDialog.ts` | The save flow. |
 | `src/bridge/` | The two-world RPC. |
-| `tests/` | 194 tests. `npm test`. |
+| `tests/` | 138 tests. `npm test`. |
 
 ---
 
 ## The API this depends on
 
-claude.ai's JSON API is private and unversioned. Everything below was verified
-against live traffic on **2026-10-13**. Re-derive it from DevTools → Network if
-something breaks.
-
-Auth is **first-party session cookies only** — no API key, and notably *not* an
+claude.ai's JSON API is private and unversioned. Verified 2026-10-13. Auth is
+**first-party session cookies only** — no API key, and notably *not* an
 `anthropic-version` header.
 
 | Purpose | Request |
 |---|---|
 | Account + orgs | `GET /api/bootstrap` |
-| List conversations | `GET /api/organizations/{org}/chat_conversations_v2?limit&offset&archived&consistency=eventual` |
 | Read conversation | `GET /api/organizations/{org}/chat_conversations/{uuid}?tree=True&rendering_mode=messages&render_all_tools=true&include_inline_comparison=true&consistency=strong` |
-| Create conversation | `POST /api/organizations/{org}/chat_conversations` `{name, model}` |
-| **Send a turn** | `POST /api/organizations/{org}/chat_conversations/{uuid}/completion` `{prompt, parent_message_uuid, rendering_mode, model}` → SSE |
-| Auto-title | `POST /api/organizations/{org}/chat_conversations/{uuid}/title` `{message_content, recent_titles}` — proposes a title; does not overwrite an existing one |
 | Rename / star / archive | `PUT /api/organizations/{org}/chat_conversations/{uuid}` (metadata only) |
 | Delete | `POST /api/organizations/{org}/chat_conversations/delete_many` `{conversation_uuids}` |
-| Usage limits | `GET /api/organizations/{org}/usage?at_wall=1&cedar_ember=1&skip_spend=1` |
-| Usage fallback | `localStorage["claudeai.<experiment>.<orgUuid>"]` — see below |
 
 Note the capital-T `tree=True`. The plausible-looking
 `/chat_conversations/{uuid}/tree` route returns 404.
 
-### A third constraint: usage is not reliably in the API
-
-On the account this was developed against, `/usage` returns
-`{ five_hour: null, seven_day: null, limits: [], ... }` for **every** query
-variant tried, while the sidebar simultaneously shows "Sesi (5j): 6%" and
-"Mingguan: 2%". No usage request appears in the network log on page load at all.
-
-The sidebar renders from a `localStorage` entry:
-
-```json
-{"resetsAt":1791877800,"utilization":0.03,"prevUtilization":null,
- "observedAt":1791860201.881,"atWall":false,"fired":[],"shown":false}
-```
-
-`utilization` and `resetsAt` (unix seconds) come from SSE frames on the
-`/completion` stream. The extension uses `/usage` when it has data and falls
-back to this cache otherwise, marking cached rows so the number is not mistaken
-for live.
-
-### Two constraints that shape the whole design
-
-**1. There is no message-write API.**
-
-These were all probed and do not exist:
-
-- `POST …/chat_conversations/{uuid}` with `chat_messages` → metadata only
-- `POST …/chat_conversations/{uuid}/chat_messages` → 404
-- `GET`/`DELETE`/`POST`/`PUT …/chat_conversations/{uuid}/chat_messages/{msg}` → 404
-- `…/chat_conversations/{uuid}/fork` → 404
-- conversation export / share-import routes → 404 or 403
-
-The only mutation that creates content is `/completion`, whose `prompt` must be
-a **plain string** (`content: []` → `400 content: Extra inputs are not
-permitted`; `personal_styles` → `400 … Extra inputs are not permitted`).
-
-So an import is a **context transplant**: the transcript is posted as prompt
-text. Content fidelity is total; only the bubble layout differs — the imported
-session shows the history as one large message followed by Claude's reply,
-rather than as alternating bubbles.
-
-Two consequences are handled explicitly:
-
-- **Aborting the SSE stream does not stop generation.** Verified: aborting after
-  `message_start` still persists a complete assistant turn server-side. So the
-  importer never aborts mid-chunk.
-- **A prompt up to 1,000,000 characters is accepted** (verified). The default
-  120,000-char chunking is about keeping generations reasonable, not a server
-  limit. Each chunk costs one assistant reply of the target profile's quota, and
-  the import dialog shows the chunk count before you commit.
-
-**2. `chat_messages` is a tree, not a list.**
+### `chat_messages` is a tree, not a list
 
 Editing or regenerating forks a branch. Siblings share a `parent_message_uuid`
 and `index` is non-monotonic. `chat_messages[len-1]` is **not** the last turn.
@@ -202,13 +129,13 @@ current_leaf_message_uuid = message 3
 ```
 
 `src/core/tree.ts` walks back from `current_leaf_message_uuid` and exports
-`[2, 3]`. The abandoned branch is counted and shown in the save dialog, never
+`[2, 3]`. The abandoned branch is counted and shown in the dialog, never
 silently mixed in.
 
 ### Files cannot be moved
 
 File assets are org-scoped at `/api/{org}/files/{file_uuid}/…`, so a bundle from
-profile A cannot reference or re-upload anything into profile B. Files are
+one account cannot reference or re-upload anything into another. Files are
 recorded as `[file omitted: name (N KB) - not transferred across accounts]`.
 
 ---
@@ -220,7 +147,7 @@ recorded as `[file omitted: name (N KB) - not transferred across accounts]`.
   "format": "claude-session-transfer",
   "version": 1,
   "exported_at": "2026-10-13T13:24:00.000Z",
-  "session_name": "My session",          // becomes the imported conversation's title
+  "session_name": "My session",
   "source": {
     "account_uuid": "…", "account_email": "…",
     "organization_uuid": "…", "organization_name": "…",
@@ -246,67 +173,8 @@ recorded as `[file omitted: name (N KB) - not transferred across accounts]`.
 ```
 
 Block types: `text`, `thinking`, `tool_use`, `tool_result`, and the synthesised
-`file` placeholder.
-
-Older files are upgraded by `migrateBundle`; a file from a **newer** version is
-rejected with an explanatory message rather than silently misread.
-
----
-
-## Resilience
-
-**Quota runs out mid-import.** The importer persists a resume token
-(`sext.import.resume`) after every successful chunk. When the target profile
-hits `exceeded_limit`, it pauses, keeps the half-built conversation, and the
-next time you open the import dialog offers to **resume that import** —
-continuing against the same conversation instead of creating a duplicate.
-
-**Vulnerable to heading spoofing.** Turn headings are what the chunker splits
-on, so a message containing a literal `## Turn 4 - Assistant` line would forge a
-turn boundary. All authored content gets a zero-width space injected after
-`## Turn`, which renders identically and cannot match the splitter.
-
-**Unknown limits.** Some organizations return every usage bucket as `null`. On
-page load claude.ai makes **no** usage request at all — the sidebar percentages
-are rendered from a `localStorage` cache keyed `claudeai.<experiment>.<orgUuid>`,
-kept current by SSE frames on the completion stream. So when `/usage` says
-nothing, the extension reads that same cache. Those rows are labelled
-**(cached)** with a note that the number may lag, and a real API response always
-wins over the cache. When neither source has data the UI says "Limits: n/a"
-rather than showing `0% used`, because reporting zero would imply quota we
-cannot confirm exists.
-
----
-
-## Development
-
-```bash
-npm run dev        # rebuild dist/ on change (load dist/ unpacked to see it live)
-npm run typecheck  # tsc --noEmit, strict
-npm test           # 194 tests
-npm run build      # typecheck + build
-
-node scripts/live-check.mjs   # bundle the live-check harness
-```
-
-`scripts/live-check.entry.ts` runs the entire pipeline — read → bundle →
-chunk → create → `/completion` → verify → delete — against a real logged-in
-claude.ai tab. It always cleans up after itself. Load `.playwright-mcp/live-check.js`
-into a claude.ai tab and call `__sextLiveCheck('<conversation-uuid>')`.
-
-See [BACKLOG.md](./BACKLOG.md) for what is planned next, and
-[implementation_plan.md](./implementation_plan.md) for the original design and
-the API findings it was built on.
-
-### Testing notes
-
-`tests/e2e.test.ts` replays a payload captured verbatim from claude.ai,
-including the sibling-branch structure, through a `fetch` that enforces the real
-server contract (strict body keys, parent chaining, SSE framing).
-
-`tests/api.test.ts` asserts the exact request shapes — `tree=True` present,
-`/tree` absent, `conversation_uuids` not `conversation_ids`, `personal_styles`
-never sent. These are the details that break silently.
+`file` placeholder. Older files are upgraded by `migrateBundle`; a file from a
+**newer** version is rejected with an explanatory message.
 
 ---
 
@@ -314,9 +182,12 @@ never sent. These are the details that break silently.
 
 Everything stays on your machine. The extension talks only to `https://claude.ai`
 and stores sessions in `chrome.storage.local`. There is no server, no API key,
-and no analytics. Permissions: `storage`, `alarms`, and host access to
-`https://claude.ai`.
+and no analytics. Permissions: `storage`, and host access to `https://claude.ai`.
 
 ## Licence
 
 No licence file yet — add one before distributing this.
+
+See [BACKLOG.md](./BACKLOG.md) for what is planned next, and
+[implementation_plan.md](./implementation_plan.md) for the original design and
+the API findings it was built on.

@@ -17,16 +17,8 @@ export const manifest = {
   description:
     'Save a Claude conversation in one browser profile and continue it in another.',
   minimum_chrome_version: '111',
-  permissions: ['storage', 'alarms'],
+  permissions: ['storage'],
   host_permissions: ['https://claude.ai/*'],
-  // Declared so `chrome.action` exists in the service worker. Without an
-  // `action` key the API is simply undefined and every badge call throws.
-  action: {
-    default_title: 'Session Transfer',
-  },
-  background: {
-    service_worker: 'service-worker.js',
-  },
   content_scripts: [
     {
       matches: ['https://claude.ai/*'],

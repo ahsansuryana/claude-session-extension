@@ -1,24 +1,28 @@
 import { call, installBridge } from '../bridge/port';
-import { getSettings } from '../core/settings';
-import { isExtensionGone, storageGet, storageSet } from '../core/storage';
-import { STORAGE_KEYS, type ImportResumeToken } from '../types/session';
-import type { ClaudeUsage } from '../types/claude';
-import { mountDock } from './ui/dock';
+import { isExtensionGone } from '../core/storage';
+import { mountFab, type FabHandle } from './ui/fab';
 import { STYLES } from './ui/styles';
-import { currentConversationUuid, onRouteChange, parseRoute } from './router';
-import { onImportProgress } from './importState';
+import { currentConversationUuid, onRouteChange, parseRoute, type Route } from './router';
 import { openSaveDialog } from './saveDialog';
-import { openImportDialog } from './importDialog';
 
 /**
  * Content-script entry point.
  *
- * Mounts one shadow root on claude.ai and keeps it in sync with the SPA route.
- * Everything network-facing goes through the MAIN-world bridge; everything
- * `chrome.*`-facing stays here in the isolated world.
+ * Save-only build: one 34px button. Import and usage tracking were removed on
+ * the `save-only` branch; the transfer code still lives on `main`.
+ *
+ * Everything network-facing goes through the MAIN-world bridge, which owns
+ * `fetch`; everything `chrome.*`-facing stays here in the isolated world.
  */
 
 const HOST_ID = 'session-transfer-host';
+
+/**
+ * Bumped whenever `STYLES` changes shape. A tab that outlives an extension
+ * update would otherwise keep the old stylesheet (and the old UI) with no
+ * explanation, because re-using the host is what makes mounting idempotent.
+ */
+const UI_VERSION = '1';
 
 interface Ui {
   /** Element that owns the shadow root. Never append UI here. */
@@ -29,17 +33,20 @@ interface Ui {
 
 function createUi(): Ui {
   const existing = document.getElementById(HOST_ID);
-  if (existing instanceof HTMLElement && existing.shadowRoot) {
-    return { host: existing, root: existing.shadowRoot };
+  if (existing instanceof HTMLElement && existing.dataset.sextVersion === UI_VERSION) {
+    return { host: existing, root: existing.shadowRoot as ShadowRoot };
   }
+  // Stale host from a previous build: replace it rather than layering new UI
+  // on top of old styles.
+  existing?.remove();
 
   const host = document.createElement('div');
   host.id = HOST_ID;
+  host.dataset.sextVersion = UI_VERSION;
   host.setAttribute('data-sext', 'host');
   // `all: initial` resets every inherited property; `pointer-events: none`
-  // (declared explicitly because an inline style would beat the stylesheet's
-  // `:host` rule) guarantees the host never swallows clicks meant for the
-  // page. `.dock` / `.overlay` / `.toast` opt back in.
+  // guarantees the host never swallows clicks meant for the page. The FAB opts
+  // back in.
   host.style.cssText = 'all: initial; pointer-events: none';
 
   const root = host.attachShadow({ mode: 'open' });
@@ -55,65 +62,24 @@ async function main(): Promise<void> {
   const { root } = createUi();
   installBridge();
 
-  let usage: ClaudeUsage | null = null;
-  let orgUuid = '';
-
-  const dock = mountDock({
+  const fab: FabHandle = mountFab({
     root,
-    usage: () => usage,
-    orgUuid: () => orgUuid,
     onSave: () => {
-      void openSaveDialog({
-        root,
-        conversationUuid: currentConversationUuid,
-      });
-    },
-    onImport: () => {
-      openImportDialog({
-        root,
-        onImported: (uuid) => {
-          location.assign(`/chat/${uuid}`);
-        },
-      });
+      void openSaveDialog({ root, conversationUuid: currentConversationUuid });
     },
   });
 
-  onRouteChange((route) => dock.refresh(route));
+  const apply = (route: Route): void => fab.setEnabled(route.kind === 'chat');
+  onRouteChange(apply);
+  apply(parseRoute(location.pathname));
 
-  // An import survives navigation to /chat/{uuid}, so the dock keeps showing
-  // where it got to rather than silently disappearing.
-  onImportProgress((state) => dock.setImport(state));
+  // Touch the API once so a dead extension context is reported here rather
+  // than on the user's first save.
+  void call('resolveActiveOrg', {}).catch((error: unknown) => {
+    if (isExtensionGone(error)) showReloadNotice(root);
+  });
 
-  // Usage is advisory: a failure here must never break saving or importing.
-  void (async () => {
-    try {
-      const org = await call<{ org: string }>('resolveActiveOrg', {});
-      orgUuid = org.org;
-      usage = await call<ClaudeUsage>('getUsage', { org: org.org });
-      await storageSet({
-        [STORAGE_KEYS.limitsSnapshot]: { usage, at: Date.now(), org: org.org },
-      });
-      const raw = await storageGet(STORAGE_KEYS.resumeToken);
-      const pending = raw[STORAGE_KEYS.resumeToken] as ImportResumeToken | undefined;
-      if (pending) {
-        chrome.runtime
-          .sendMessage({ type: 'sext:resume-pending', sessionName: pending.session_name })
-          .catch(() => undefined);
-      }
-    } catch (error) {
-      usage = null;
-      // Reloading the extension orphans the content script in every open tab;
-      // say so instead of leaving a dead dock behind.
-      if (isExtensionGone(error)) {
-        showReloadNotice(root);
-        return;
-      }
-    }
-    dock.refresh(parseRoute(location.pathname));
-  })();
-
-  void getSettings().catch(() => undefined);
-  window.addEventListener('pagehide', () => dock.destroy(), { once: true });
+  window.addEventListener('pagehide', () => fab.destroy(), { once: true });
 }
 
 /** Tell the user to reload after the extension context died. */

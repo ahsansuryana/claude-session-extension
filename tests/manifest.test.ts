@@ -1,7 +1,3 @@
-import { describe, expect, it } from 'vitest';
-import { manifest } from '../scripts/build.mjs';
-import { ENTRIES } from '../scripts/entries.mjs';
-
 /**
  * Build-configuration invariants.
  *
@@ -9,23 +5,27 @@ import { ENTRIES } from '../scripts/entries.mjs';
  * can never see: `chrome.action` is undefined unless the manifest declares an
  * `action`, and content scripts must each carry the `world` their code assumes.
  */
+import { describe, expect, it } from 'vitest';
+import { manifest } from '../scripts/build.mjs';
+import { ENTRIES } from '../scripts/entries.mjs';
+
 describe('manifest', () => {
   it('is manifest V3', () => {
     expect(manifest.manifest_version).toBe(3);
   });
 
-  it('declares an action so chrome.action exists in the worker', () => {
-    // Without this key, `chrome.action` is undefined and every badge call
-    // throws "Cannot read properties of undefined".
-    expect(manifest.action).toBeTruthy();
-    expect(typeof manifest.action).toBe('object');
+  it('requests only the permissions the save flow uses', () => {
+    // The dialog triggers downloads with an anchor click, so `downloads` is
+    // not needed. The save-only build has no background worker, so neither is
+    // `alarms`.
+    expect(manifest.permissions).toEqual(['storage']);
+    expect(manifest.permissions).not.toContain('downloads');
+    expect(manifest.permissions).not.toContain('alarms');
   });
 
-  it('requests only the permissions the extension uses', () => {
-    expect(manifest.permissions.sort()).toEqual(['alarms', 'storage']);
-    // The dock and dialogs use an anchor click for downloads, so the
-    // `downloads` permission is not needed.
-    expect(manifest.permissions).not.toContain('downloads');
+  it('has no background worker', () => {
+    expect(manifest.background).toBeUndefined();
+    expect(manifest.action).toBeUndefined();
   });
 
   it('is scoped to claude.ai only', () => {
@@ -61,13 +61,9 @@ describe('manifest', () => {
 });
 
 describe('entries', () => {
-  it('bundles each script as a standalone classic script', () => {
+  it('bundles exactly two scripts', () => {
     // Content scripts are not modules: every entry must be self-contained.
-    expect(ENTRIES.map((e) => e.file).sort()).toEqual([
-      'content.js',
-      'main-world.js',
-      'service-worker.js',
-    ]);
+    expect(ENTRIES.map((e) => e.file).sort()).toEqual(['content.js', 'main-world.js']);
   });
 
   it('uses legal identifiers for the IIFE wrappers', () => {

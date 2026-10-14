@@ -12,6 +12,29 @@ export function h<K extends keyof HTMLElementTagNameMap>(
   ...children: Child[]
 ): HTMLElementTagNameMap[K] {
   const el = document.createElement(tag);
+  applyAttrs(el, attrs);
+  append(el, children);
+  return el;
+}
+
+/**
+ * SVG element factory.
+ *
+ * `document.createElement('svg')` produces an unknown HTML element that the
+ * browser will not render, so SVG needs its own namespace.
+ */
+export function svg(
+  tag: string,
+  attrs: Record<string, string | number> = {},
+  ...children: Child[]
+): SVGElement {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [key, value] of Object.entries(attrs)) el.setAttribute(key, String(value));
+  append(el, children);
+  return el;
+}
+
+function applyAttrs(el: HTMLElement, attrs: Attrs): void {
   for (const [key, value] of Object.entries(attrs)) {
     if (value === null || value === undefined || value === false) continue;
     if (key.startsWith('on') && typeof value === 'function') {
@@ -26,8 +49,6 @@ export function h<K extends keyof HTMLElementTagNameMap>(
       el.setAttribute(key, value === true ? '' : String(value));
     }
   }
-  append(el, children);
-  return el;
 }
 
 export function append(parent: Node, children: Child[]): void {
@@ -125,11 +146,4 @@ export function toast(root: UiRoot, message: string, kind: 'info' | 'error' = 'i
   root.appendChild(el);
   setTimeout(() => el.classList.add('toast-out'), 3200);
   setTimeout(() => el.remove(), 3800);
-}
-
-/** Escape user text before it goes anywhere near innerHTML. */
-export function text(value: unknown): string {
-  const div = document.createElement('div');
-  div.textContent = value === null || value === undefined ? '' : String(value);
-  return div.innerHTML;
 }

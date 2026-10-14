@@ -20,6 +20,7 @@ describe('parseRoute', () => {
   });
 
   it('does not treat a non-uuid chat path as a conversation', () => {
+    // The save button must not be enabled on /chat/garbage.
     expect(parseRoute('/chat/abc').kind).toBe('other');
     expect(parseRoute('/chat/').kind).toBe('other');
   });
@@ -29,14 +30,16 @@ describe('parseRoute', () => {
     expect(parseRoute('/')).toEqual({ kind: 'other', conversationUuid: null });
   });
 
-  it('exports the root sentinel the importer parents first turns onto', () => {
+  it('exports the root sentinel the transfer format references', () => {
     expect(ROOT_MESSAGE_UUID).toBe('00000000-0000-4000-8000-000000000000');
   });
 });
 
 describe('slugify', () => {
   it('lowercases and collapses punctuation', () => {
-    expect(slugify('Bantuan latihan dan tugas dengan LaTeX')).toBe('bantuan-latihan-dan-tugas-dengan-latex');
+    expect(slugify('Bantuan latihan dan tugas dengan LaTeX')).toBe(
+      'bantuan-latihan-dan-tugas-dengan-latex',
+    );
   });
 
   it('trims leading and trailing dashes', () => {

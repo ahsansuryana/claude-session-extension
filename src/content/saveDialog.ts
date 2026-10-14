@@ -7,7 +7,6 @@ import type { ClaudeConversation } from '../types/claude';
 import type { SessionBundle, SessionSource } from '../types/session';
 import { bundleFilename, downloadJson } from './download';
 import { h, showModal, toast } from './ui/dom';
-import { formatWhen } from './ui/vaultList';
 
 export interface SaveDialogContext {
   /** Shadow root to render the dialog into. */
@@ -194,6 +193,20 @@ export async function openSaveDialog(ctx: SaveDialogContext): Promise<void> {
       ),
     );
   });
+}
+
+/** Relative time, e.g. "3d ago". */
+function formatWhen(iso: string): string {
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return 'unknown date';
+  const mins = Math.round((Date.now() - then) / 60_000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  return new Date(then).toLocaleDateString();
 }
 
 function stat(k: string, v: string): HTMLElement {

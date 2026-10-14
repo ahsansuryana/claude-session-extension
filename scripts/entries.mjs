@@ -15,9 +15,4 @@
 export const ENTRIES = [
   { input: 'src/bridge/main.ts', file: 'main-world.js', name: 'SessionTransferMain' },
   { input: 'src/content/index.ts', file: 'content.js', name: 'SessionTransferContent' },
-  {
-    input: 'src/background/service-worker.ts',
-    file: 'service-worker.js',
-    name: 'SessionTransferWorker',
-  },
 ];
