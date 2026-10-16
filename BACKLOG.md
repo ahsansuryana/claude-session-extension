@@ -11,8 +11,10 @@ not rediscovered from scratch.
 then pulled when the extension was trimmed to a single save button.
 
 **Why it went:** the panel covered too much of claude.ai's own UI. Import was
-the bulk of that surface. It remains recoverable — the export format is the
-same conversation tree the importer read.
+the bulk of that surface. It remains recoverable: **the `.claude-session.json`
+bundle format is still produced by the save button**, and `parseBundle` /
+`migrateBundle` in `src/core/bundle.ts` still validate it. Only the panel, the
+vault and the upload path were removed.
 
 ### What it did
 

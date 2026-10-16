@@ -144,7 +144,7 @@ export function mountFab(opts: FabOptions): FabHandle {
     try {
       const result = await exportCurrentConversation(uuid);
       setState('done');
-      toast(root, `Saved ${result.filename} · ${result.turns} turns`);
+      toast(root, `Saved ${result.filename} · ${result.summary}`);
     } catch (error) {
       setState('error');
       // Reloading the extension orphans this tab; say so instead of showing a

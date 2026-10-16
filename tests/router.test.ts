@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseRoute } from '../src/content/router';
-import { markdownFilename } from '../src/core/markdown';
+import { bundleFilename, slugify } from '../src/content/download';
 
 describe('parseRoute', () => {
   const uuid = '471bbd5c-3d8e-4fd5-a1f7-c36344b5fd41';
@@ -29,34 +29,29 @@ describe('parseRoute', () => {
   });
 });
 
-describe('markdownFilename', () => {
-  it('uses the session name', () => {
-    expect(markdownFilename('Contoh soal yang membingungkan')).toBe(
-      'contoh-soal-yang-membingungkan.md',
+describe('bundleFilename', () => {
+  it('names the file after the session', () => {
+    expect(bundleFilename('Contoh soal yang membingungkan')).toBe(
+      'contoh-soal-yang-membingungkan.claude-session.json',
     );
   });
 
-  it('collapses punctuation into dashes', () => {
-    expect(markdownFilename('My session!')).toBe('my-session.md');
-  });
-
-  it('trims leading and trailing dashes', () => {
-    expect(markdownFilename('  --Hello!! World--  ')).toBe('hello-world.md');
+  it('collapses punctuation and trims dashes', () => {
+    expect(bundleFilename('My session!')).toBe('my-session.claude-session.json');
+    expect(bundleFilename('  --Hello!! World--  ')).toBe('hello-world.claude-session.json');
   });
 
   it('falls back when there is nothing usable', () => {
-    expect(markdownFilename('!!!')).toBe('claude-session.md');
-    expect(markdownFilename(undefined)).toBe('claude-session.md');
-    expect(markdownFilename('')).toBe('claude-session.md');
+    expect(bundleFilename('!!!')).toBe('session.claude-session.json');
   });
 
-  it('caps length at 60 characters without a trailing dash', () => {
-    const name = markdownFilename('a'.repeat(200));
-    expect(name.length).toBeLessThanOrEqual(63); // 60 + '.md'
-    expect(name.endsWith('.md')).toBe(true);
+  it('caps the slug without leaving a trailing dash', () => {
+    const name = slugify('a'.repeat(200));
+    expect(name.length).toBeLessThanOrEqual(60);
+    expect(name).toBe('a'.repeat(60));
   });
 
   it('strips diacritics', () => {
-    expect(markdownFilename('Café Réunion')).toBe('cafe-reunion.md');
+    expect(bundleFilename('Café Réunion')).toBe('cafe-reunion.claude-session.json');
   });
 });

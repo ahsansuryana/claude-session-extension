@@ -1,7 +1,30 @@
-/** Trigger a browser download. No `chrome.downloads` permission needed. */
+/** Filename slug + file download, no `chrome.downloads` permission required. */
 
-export function downloadText(filename: string, text: string, mime = 'text/markdown'): void {
-  const blob = new Blob([text], { type: `${mime};charset=utf-8` });
+const MAX_SLUG = 60;
+
+/** Lowercase, non-alphanumerics collapsed to dashes, trimmed, length-capped. */
+export function slugify(name: string): string {
+  const slug = name
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, MAX_SLUG)
+    .replace(/-+$/g, '');
+  return slug || 'session';
+}
+
+/** Extension is part of the name so a downloaded file is recognisable on disk. */
+export function bundleFilename(name: string): string {
+  return `${slugify(name)}.claude-session.json`;
+}
+
+/** Write JSON to a file in the user's downloads folder. */
+export function downloadJson(filename: string, data: unknown): void {
+  const blob = new Blob([JSON.stringify(data, null, 2)], {
+    type: 'application/json',
+  });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
